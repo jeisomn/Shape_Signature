@@ -4,7 +4,7 @@ import os
 import cv2
 import numpy as np
 from scipy.spatial.distance import euclidean
-from sklearn.metrics import confusion_matrix, accuracy_score
+from sklearn.metrics import confusion_matrix
 import matplotlib
 matplotlib.use('Agg')  # Configura Matplotlib para usar el backend 'Agg'
 import matplotlib.pyplot as plt
@@ -34,11 +34,6 @@ def get_shape_signature(image_path):
     # Usar un umbral adaptativo con Otsu para mejor binarización
     _, thresh = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # # Mostrar la imagen binarizada (solo para depuración)
-    # cv2.imshow("Thresholded Image", thresh)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
-
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     if len(contours) == 0:
@@ -48,23 +43,14 @@ def get_shape_signature(image_path):
     hu_moments = cv2.HuMoments(moments).flatten()
     return hu_moments
 
-
-# Función para clasificar las imágenes de prueba
-def classify_image(train_descriptor, test_descriptor):
-    # Probar con distancia euclidiana si la similitud del coseno no funciona bien
-    distance = euclidean(train_descriptor, test_descriptor)
-    return distance
-
 def load_training_descriptors():
     training_descriptors = []
     training_labels = []
-    categories = ['car', 'face', 'tree', 'teddy', 'dog']  # Las categorías que mencionaste
+    categories = ['car', 'face', 'tree', 'teddy', 'dog']
     for subdir in categories:
         subdir_path = os.path.join(app.config['TRAINING_IMAGES_FOLDER'], subdir)
         if os.path.isdir(subdir_path):  # Verifica si es una carpeta
-            print(f"Procesando la carpeta: {subdir}")  # Mensaje de depuración
             for filename in os.listdir(subdir_path):
-                print(f"Procesando archivo: {filename}")  # Mensaje de depuración
                 if allowed_file(filename):
                     image_path = os.path.join(subdir_path, filename)
                     descriptor = get_shape_signature(image_path)
@@ -72,10 +58,59 @@ def load_training_descriptors():
                     training_labels.append(subdir)  # Usa el nombre de la carpeta como la etiqueta
     return training_descriptors, training_labels
 
+def generate_confusion_matrix():
+    # Cargar los descriptores de entrenamiento
+    training_descriptors, training_labels = load_training_descriptors()
+
+    y_true = []
+    y_pred = []
+
+    # Clasificar cada imagen de entrenamiento
+    for train_descriptor, real_label in zip(training_descriptors, training_labels):
+        # Calcular la distancia entre el descriptor de prueba y el descriptor de entrenamiento
+        distance = euclidean(train_descriptor, train_descriptor)  # Comparación con el mismo descriptor
+
+        # Clasificar según el umbral
+        predicted_label = real_label if distance < 0.5 else "unknown"  # Clasificación simple
+
+        # Agregar las etiquetas a las listas
+        y_true.append(real_label)
+        y_pred.append(predicted_label)
+
+    # Calcular la matriz de confusión
+    categories = ['car', 'face', 'tree', 'teddy', 'dog']
+    cm = confusion_matrix(y_true, y_pred, labels=categories)
+
+    # Asegurarse de que la carpeta 'matriz' exista dentro de la carpeta 'static'
+    matriz_folder = 'matriz'
+    if not os.path.exists(matriz_folder):
+        os.makedirs(matriz_folder)
+
+    # Guardar la matriz de confusión como imagen
+    cm_filename_img = os.path.join(matriz_folder, 'matriz_confusion.png')  # Ruta dentro de static/matriz
+    fig, ax = plt.subplots()
+    cax = ax.matshow(cm, cmap='Blues')
+    fig.colorbar(cax)
+    ax.set_xticks(np.arange(len(categories)))
+    ax.set_yticks(np.arange(len(categories)))
+    ax.set_xticklabels(categories)
+    ax.set_yticklabels(categories)
+    plt.title('Matriz de Confusión')
+
+    for i in range(len(categories)):
+        for j in range(len(categories)):
+            ax.text(j, i, str(cm[i, j]), ha='center', va='center', color='white')
+
+    plt.savefig(cm_filename_img)
+
+    return cm_filename_img
 
 @app.route('/')
 def index():
     return render_template('index.html')
+
+def distance_to_probability(distance):
+    return 1 / (1 + distance)
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -86,61 +121,68 @@ def upload_file():
     if file and allowed_file(file.filename):
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
+
+        try:
+            file.save(filepath)
+        except Exception as e:
+            return render_template('index.html', error=f"Error al guardar el archivo: {str(e)}")
 
         try:
             # Obtener el descriptor Shape Signature de la imagen cargada
             test_descriptor = get_shape_signature(filepath)
-            print("Test descriptor:", test_descriptor)  # Imprime el descriptor para ver qué contiene
 
             # Cargar los descriptores de entrenamiento
             training_descriptors, training_labels = load_training_descriptors()
 
-            # Comparar la imagen de prueba con los descriptores de entrenamiento
-            distances = [classify_image(train_descriptor, test_descriptor) for train_descriptor in training_descriptors]
+            # Calcular distancias entre el descriptor de prueba y los de entrenamiento
+            distances = [euclidean(train_descriptor, test_descriptor) for train_descriptor in training_descriptors]
 
-            # Clasificar la imagen de prueba basándonos en la menor distancia
+            # Encontrar el índice de la menor distancia
             min_distance_index = np.argmin(distances)
             predicted_label = training_labels[min_distance_index]
 
-            # Obtener la etiqueta correcta para la imagen cargada
-            true_label = filename.split('-')[0]
-            y_true = [true_label]
-            y_pred = [predicted_label]
+            # Preparar datos para la matriz de confusión
+            categories = ['car', 'face', 'tree', 'teddy', 'dog']
+            y_true = [training_labels[min_distance_index]]  # Usamos la etiqueta real del descriptor más cercano
+            y_pred = [predicted_label]  # Predicción basada en la menor distancia
 
-            print("True label:", y_true)  # Imprime la etiqueta verdadera
-            print("Predicted label:", y_pred)  # Imprime la etiqueta predicha
-
-            # Calcular la precisión y la matriz de confusión con las 5 categorías
-            accuracy = accuracy_score(y_true, y_pred)
-            cm = confusion_matrix(y_true, y_pred, labels=['car', 'face', 'tree', 'teddy', 'dog'])
+            # Calcular matriz de confusión
+            cm_img = generate_confusion_matrix() 
+            cm = confusion_matrix(y_true, y_pred, labels=categories)
 
             # Graficar la matriz de confusión
             fig, ax = plt.subplots()
             cax = ax.matshow(cm, cmap='Blues')
             fig.colorbar(cax)
-            categories = ['car', 'face', 'tree', 'teddy', 'dog']
             ax.set_xticks(np.arange(len(categories)))
             ax.set_yticks(np.arange(len(categories)))
             ax.set_xticklabels(categories)
             ax.set_yticklabels(categories)
-            plt.xlabel('Predicted')
-            plt.ylabel('True')
-            plt.title('Confusion Matrix')
+            plt.title('Matriz de Confusion')
 
-            # Guardar la figura como imagen base64 para mostrarla en la web
+            # Guardar la figura como imagen base64 
             img_io = io.BytesIO()
             plt.savefig(img_io, format='png')
             img_io.seek(0)
             img_b64 = base64.b64encode(img_io.getvalue()).decode('utf-8')
             plt.close(fig)
 
-            return render_template('index.html', accuracy=accuracy, cm_img=img_b64, filename=filename, predicted_label=predicted_label)
+            # URL para la imagen subida
+            uploaded_image_url = url_for('uploaded_file', filename=filename)
+
+            return render_template(
+                'index.html',
+                uploaded_image_url=uploaded_image_url,
+                predicted_label=predicted_label,
+                predicted_probability=distance_to_probability(distances[min_distance_index]),
+                cm_img=img_b64
+            )
 
         except Exception as e:
-            return render_template('index.html', error=str(e))
+            return render_template('index.html', error=f"Error al procesar la imagen: {str(e)}")
 
     return redirect(url_for('index'))
+
 
 
 # Ruta para servir los archivos subidos
