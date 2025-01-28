@@ -87,6 +87,51 @@
             margin-top: 20px;
             font-weight: bold;
         }
+        button {
+            background-color: #4c8baf; /* Color de fondo */
+            color: white; /* Color del texto */
+            font-size: 1em; /* Tamaño de la fuente */
+            padding: 10px 20px; /* Relleno (arriba/abajo, izquierda/derecha) */
+            border: none; /* Elimina el borde predeterminado */
+            border-radius: 5px; /* Bordes redondeados */
+            cursor: pointer; /* Cambia el cursor cuando se pasa sobre el botón */
+            transition: background-color 0.3s, transform 0.3s; /* Transición suave para color y transformaciones */
+        }
+
+        button:hover {
+            background-color: #2e5c77; /* Cambia el color de fondo cuando se pasa el ratón */
+            transform: scale(1.05); /* Efecto de agrandamiento al pasar el ratón */
+        }
+
+        button:active {
+            background-color: #2e5c77; /* Cambia el color cuando se hace clic */
+            transform: scale(1); /* Vuelve al tamaño original al hacer clic */
+        }
+        input[type="file"] {
+            display: none; /* Oculta el botón predeterminado */
+        }
+
+        label.file-upload {
+            display: inline-block;
+            background-color: #4c8baf; /* Color de fondo */
+            color: white; /* Color del texto */
+            font-size: 1em; /* Tamaño de la fuente */
+            padding: 10px 20px; /* Relleno (arriba/abajo, izquierda/derecha) */
+            border-radius: 5px; /* Bordes redondeados */
+            cursor: pointer; /* Cambia el cursor cuando se pasa sobre el botón */
+            transition: background-color 0.3s, transform 0.3s; /* Transición suave para color y transformaciones */
+        }
+
+        label.file-upload:hover {
+            background-color: #2e5c77; /* Cambia el color de fondo cuando se pasa el ratón */
+            transform: scale(1.05); /* Efecto de agrandamiento al pasar el ratón */
+        }
+
+        label.file-upload:active {
+            background-color: #2e5c77; /* Cambia el color cuando se hace clic */
+            transform: scale(1); /* Vuelve al tamaño original al hacer clic */
+        }
+
     </style>
 </head>
 <body>
@@ -97,10 +142,14 @@
         <!-- Formulario para subir imagen -->
         <div class="form-container">
             <form action="/upload" method="POST" enctype="multipart/form-data">
-                <input type="file" name="file" required>
+                <label class="file-upload">
+                    Seleccionar archivo
+                    <input type="file" name="file" required>
+                </label>
                 <button type="submit">Subir Imagen</button>
             </form>
         </div>
+        
 
         {% if uploaded_image_url %}
             <div class="content-container">
