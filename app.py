@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import io
 import base64
 from sklearn.metrics.pairwise import cosine_similarity
+from pathlib import Path
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads/'
@@ -25,24 +26,61 @@ if not os.path.exists(app.config['UPLOAD_FOLDER']):
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
-# Función para obtener el descriptor Shape Signature (Momentos de Hu)
-def get_shape_signature(image_path):
-    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        raise ValueError(f"La imagen no se pudo cargar correctamente: {image_path}")
-        
-    # Usar un umbral adaptativo con Otsu para mejor binarización
-    _, thresh = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+# Función para obtener las imágenes por categoría
+def get_images_by_category(base_dir, categories):
+    images = {category: [] for category in categories}
+    for category in categories:
+        category_path = Path(base_dir) / category
+        if category_path.exists():
+            images[category] = list(category_path.glob('*.png'))  # Ajustar si el formato cambia
+        else:
+            print(f"Advertencia: No se encontró la categoría {category}")
+    return images
 
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+# Función para extraer la firma de forma (Fourier Descriptors)
+def extract_shape_signature(image_path):
+    img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    thresh = cv2.adaptiveThreshold(img, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 11, 2)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
     if len(contours) == 0:
-        raise ValueError(f"No se encontraron contornos en la imagen {image_path}.")
+        return None
 
-    moments = cv2.moments(contours[0])
-    hu_moments = cv2.HuMoments(moments).flatten()
-    return hu_moments
+    cnt = max(contours, key=cv2.contourArea)
+    cnt = cnt.squeeze()
+    if len(cnt.shape) != 2:
+        return None
 
+    complex_contour = np.empty(cnt.shape[0], dtype=complex)
+    complex_contour.real = cnt[:, 0]
+    complex_contour.imag = cnt[:, 1]
+
+    fourier_result = np.fft.fft(complex_contour)
+    return np.abs(fourier_result[:20])  # Tomamos los primeros 20 coeficientes
+
+# Función para calcular la distancia euclidiana
+def euclidean_distance(a, b):
+    return np.linalg.norm(a - b)
+
+# Función para clasificar una imagen comparando su firma de forma
+def classify_image(test_image_path, category_signatures):
+    test_signature = extract_shape_signature(test_image_path)
+
+    if test_signature is None:
+        return "No se pudo extraer la firma de forma"
+
+    # Comparar la firma de forma de la imagen de prueba con las firmas promedio de cada categoría
+    min_distance = float('inf')
+    predicted_category = None
+    for category, signature in category_signatures.items():
+        distance = euclidean_distance(test_signature, signature)
+        if distance < min_distance:
+            min_distance = distance
+            predicted_category = category
+
+    return predicted_category
+
+# Función para cargar los descriptores de las imágenes de entrenamiento
 def load_training_descriptors():
     training_descriptors = []
     training_labels = []
@@ -53,11 +91,12 @@ def load_training_descriptors():
             for filename in os.listdir(subdir_path):
                 if allowed_file(filename):
                     image_path = os.path.join(subdir_path, filename)
-                    descriptor = get_shape_signature(image_path)
+                    descriptor = extract_shape_signature(image_path)
                     training_descriptors.append(descriptor)
                     training_labels.append(subdir)  # Usa el nombre de la carpeta como la etiqueta
     return training_descriptors, training_labels
 
+# Función para generar la matriz de confusión
 def generate_confusion_matrix():
     # Cargar los descriptores de entrenamiento
     training_descriptors, training_labels = load_training_descriptors()
@@ -110,7 +149,9 @@ def index():
     return render_template('index.html')
 
 def distance_to_probability(distance):
-    return 1 / (1 + distance)
+    scaled_distance = distance / max(1, distance)  # Escalar la distancia
+    return 1 / (1 + scaled_distance)
+
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -129,7 +170,7 @@ def upload_file():
 
         try:
             # Obtener el descriptor Shape Signature de la imagen cargada
-            test_descriptor = get_shape_signature(filepath)
+            test_descriptor = extract_shape_signature(filepath)
 
             # Cargar los descriptores de entrenamiento
             training_descriptors, training_labels = load_training_descriptors()
@@ -167,7 +208,7 @@ def upload_file():
             img_b64 = base64.b64encode(img_io.getvalue()).decode('utf-8')
             plt.close(fig)
 
-            # URL para la imagen subida
+            # URL para la imagen subida, asegurándote de que se encuentre dentro de '/uploads'
             uploaded_image_url = url_for('uploaded_file', filename=filename)
 
             return render_template(
@@ -183,9 +224,6 @@ def upload_file():
 
     return redirect(url_for('index'))
 
-
-
-# Ruta para servir los archivos subidos
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
